@@ -1,0 +1,313 @@
+#+title: Create Data
+#+PROPERTY: header-args:python :python ./env/bin/python :var dir="./Lin_IP_GA245_y" output_directory="./augmented_data"
+
+Create augmented datasets that we can use to test if the model is hallucinating or not.
+The goal is to apply various different fuzzers (data modifiers) to create augmented datasets.
+The hypothesis is that these noisy or neutral datasets will reduce the model accuracy.
+
+* Raw Data Description
+A brief summary of the data folders.
+
+| Folder Name            | Columns                                          | Description                      |
+|------------------------+--------------------------------------------------+----------------------------------|
+| Lin_IP_GA245_y         | GA, Raw Temperature Values, Y (days until labor) | Linear Interpolated data with GA |
+| Linear_Interpolation_y | Raw Temperature Values, Y (days until labor)     | Linear Interpolated data         |
+
+
+* Setup
+All the things needed to be setup for this augmentation pipeline to work.
+
+#+begin_src shell :results output
+mkdir -p augmented_data
+echo "Directories made"
+python3 -m venv env
+env/bin/pip3 install -r requirements.txt
+#+end_src
+
+#+RESULTS:
+: Directories made
+: Requirement already satisfied: numpy==2.0.1 in ./env/lib/python3.12/site-packages (from -r requirements.txt (line 1)) (2.0.1)
+
+#+begin_src python :session pipeline
+from Fuzzer import Hide
+import os
+
+map = {}
+
+for file in os.listdir(dir):
+    map[file] = Hide.loadData(os.path.join(dir, file))
+#+end_src
+
+#+RESULTS:
+
+* Creating the augmented datasets
+Creating all the various augmented datasets here to test out the model with.
+
+** Flatline dataset.
+Flatten the complete dataset.
+
+#+begin_src shell
+mkdir -p augmented_data/flatline_0
+mkdir -p augmented_data/flatline_25
+echo "Directories made"
+#+end_src
+
+#+RESULTS:
+: Directories made
+
+#+begin_src python :session pipeline
+for file in map.keys():
+   (G,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.flatLine(X)
+   dataf25 = Hide.flatLine(X, neutral=25)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(G,dataf,Y), os.path.join(output_directory, 'flatline_0', file))
+   Hide.writeToFile(Hide.mergeGXY(G,dataf25,Y), os.path.join(output_directory, 'flatline_25', file))
+#+end_src
+
+#+RESULTS:
+
+** Flatline specific days.
+Flatten only specific days, to see if hiding portions (days) of the data affect the model in any way.
+
+*** Last 5 days before pregnancy
+#+begin_src shell
+mkdir -p augmented_data/flatline_0_last5/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+for file in map.keys():
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.flatLineDays(X, days=[0, 1, 2, 3, 4])
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'flatline_0_last5', file))
+#+end_src
+
+#+RESULTS:
+
+*** First 10 days after data collection
+#+begin_src shell
+mkdir -p augmented_data/flatline_0_first10/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+for file in map.keys():
+   days = map[file].shape[0]-1
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.flatLineDays(X, days=[i for i in range(days, days-10, -1)])
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'flatline_0_first10', file))
+#+end_src
+
+#+RESULTS:
+
+*** Randomly pick any 10 days for the user to flatten
+#+begin_src shell
+mkdir -p augmented_data/flatline_0_random10/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+import numpy as np
+for file in map.keys():
+   days = map[file].shape[0]-1
+   rdays = np.random.randint(0, days, size=7).tolist()
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.flatLineDays(X, days=rdays)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'flatline_0_random10', file))
+#+end_src
+
+#+RESULTS:
+
+** Gaussian Noise
+Add Gaussian noise to the existing data to see how much it changes the prediction error or outputs.
+There are 2 types of Gaussian noise added to the data - Additive and Replacement.
+Additive - The original signal is augmented with Gaussian noise.
+Replacement - The original signal is fully replaced by the noise.
+
+Folder Names -
+ * Additive - These folders will start with =gaussian_=
+ * Replacement - These folders will start with =rgaussian_=
+
+Declare the Gaussian params in this code block.
+#+begin_src python :session pipeline
+# These defaults are used for additive noise
+mean = 5
+stddev = 2
+
+# These parameters are used for replacement noise. They are parameters that represent the temperature
+# data in the interpolated dataset.
+rmean = 32.79858042782661
+rstddev = 3.763612771713383
+#+end_src
+
+#+RESULTS:
+
+*** Gaussian noise to the complete dataset
+Adding Gaussian noise to the whole dataset.
+#+begin_src shell
+mkdir -p augmented_data/gaussian_all/
+mkdir -p augmented_data/rgaussian_all/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+import numpy as np
+for file in map.keys():
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.addGaussianNoise(X, mean=mean, std=stddev)
+   datar = Hide.onlyGaussianNoise(X, mean=rmean, std=rstddev)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'gaussian_all', file))
+   Hide.writeToFile(Hide.mergeGXY(GA,datar,Y), os.path.join(output_directory, 'rgaussian_all', file))
+#+end_src
+
+#+RESULTS:
+
+*** Gaussian noise to the last 5 days before labor
+Only the last 5 days before labor starts.
+#+begin_src shell
+mkdir -p augmented_data/gaussian_last5/
+mkdir -p augmented_data/rgaussian_last5/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+import numpy as np
+for file in map.keys():
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.addGaussianNoiseDays(X, days=[0, 1, 2, 3, 4], mean=mean, std=stddev)
+   datar = Hide.onlyGaussianNoiseDays(X, days=[0, 1, 2, 3, 4], mean=rmean, std=rstddev)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'gaussian_last5', file))
+   Hide.writeToFile(Hide.mergeGXY(GA,datar,Y), os.path.join(output_directory, 'rgaussian_last5', file))
+#+end_src
+
+#+RESULTS:
+
+*** Gaussian noise to the first 10 days of data collection
+Only the first 10 days
+#+begin_src shell
+mkdir -p augmented_data/gaussian_first10/
+mkdir -p augmented_data/rgaussian_first10/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+import numpy as np
+for file in map.keys():
+   days = map[file].shape[0]-1
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.addGaussianNoiseDays(X, days=[i for i in range(days, days-10, -1)], mean=mean, std=stddev)
+   datar = Hide.onlyGaussianNoiseDays(X, days=[i for i in range(days, days-10, -1)], mean=rmean, std=rstddev)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'gaussian_first10', file))
+   Hide.writeToFile(Hide.mergeGXY(GA,datar,Y), os.path.join(output_directory, 'rgaussian_first10', file))
+#+end_src
+
+#+RESULTS:
+
+*** Noise on random 10 days
+Randomly pick any 10 days to add noise to.
+#+begin_src shell
+mkdir -p augmented_data/gaussian_random10/
+mkdir -p augmented_data/rgaussian_random10/
+echo "Directory Made"
+#+end_src
+
+#+RESULTS:
+: Directory Made
+
+#+begin_src python :session pipeline
+import numpy as np
+for file in map.keys():
+   days = map[file].shape[0]-1
+   rdays = np.random.randint(0, days, size=7).tolist()
+   (GA,X,Y) = Hide.isolateGXY(map[file])
+   dataf = Hide.addGaussianNoiseDays(X, days=rdays, mean=mean, std=stddev)
+   datar = Hide.onlyGaussianNoiseDays(X, days=rdays, mean=rmean, std=rstddev)
+
+   # Write the data to the files.
+   Hide.writeToFile(Hide.mergeGXY(GA,dataf,Y), os.path.join(output_directory, 'gaussian_random10', file))
+   Hide.writeToFile(Hide.mergeGXY(GA,datar,Y), os.path.join(output_directory, 'rgaussian_random10', file))
+#+end_src
+
+#+RESULTS:
+
+* Structure of the augmented data created
+#+begin_src shell :results output :exports both
+find augmented_data -type d -print0 | xargs -0 -I{} sh -c 'echo -n "{}: "; find "{}" -maxdepth 1 -type f | wc -l'
+#+end_src
+
+#+RESULTS:
+#+begin_example
+-n augmented_data:
+       0
+-n augmented_data/flatline_0_first10:
+      50
+-n augmented_data/rgaussian_last5:
+      50
+-n augmented_data/rgaussian_all:
+      50
+-n augmented_data/flatline_0_random10:
+      50
+-n augmented_data/gaussian_all:
+      50
+-n augmented_data/flatline_0_last5:
+      50
+-n augmented_data/gaussian_last5:
+      50
+-n augmented_data/rgaussian_random10:
+      50
+-n augmented_data/rgaussian_first10:
+      50
+-n augmented_data/flatline_0:
+      50
+-n augmented_data/gaussian_random10:
+      50
+-n augmented_data/flatline_25:
+      50
+-n augmented_data/gaussian_first10:
+      50
+#+end_example
+
+
+* [DANGER] Cleanup Everything
+This will clean up everything. Be careful!
+
+#+begin_src shell
+rm -r augmented_data
+#rm -r env
+echo "Everything has been cleaned up!"
+#+end_src
+
+#+RESULTS:
+: Everything has been cleaned up!
